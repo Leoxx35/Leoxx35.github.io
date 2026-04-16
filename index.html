@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>AETHER - Zero Latency</title>
+    <style>
+        :root { --bg-color: #050505; --ui-glass: rgba(40, 40, 40, 0.6); }
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+        body {
+            overflow: hidden; background-color: var(--bg-color);
+            font-family: system-ui, -apple-system, sans-serif;
+            touch-action: none; color: white; height: 100vh; width: 100vw;
+        }
+        canvas { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        #ui-container {
+            position: absolute; bottom: 30px; left: 0; width: 100%; z-index: 10;
+            display: flex; justify-content: center; pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .nav-bar {
+            pointer-events: auto; background: var(--ui-glass);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            padding: 8px; border-radius: 24px; display: flex; gap: 8px;
+            border: 1px solid rgba(255,255,255,0.15); max-width: 95%;
+            overflow-x: auto; scrollbar-width: none;
+        }
+        .btn {
+            background: transparent; border: none; color: rgba(255,255,255,0.7);
+            padding: 10px 18px; border-radius: 18px; font-size: 14px; font-weight: 700;
+            cursor: pointer; white-space: nowrap; transition: 0.1s;
+        }
+        .btn.active { background: white; color: black; box-shadow: 0 0 15px rgba(255,255,255,0.4); }
+        
+        .top-controls {
+            position: absolute; top: 20px; right: 20px; z-index: 20; display: flex; gap: 15px;
+        }
+        .icon-btn {
+            background: var(--ui-glass); width: 44px; height: 44px; border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.15); color: white; display: flex;
+            align-items: center; justify-content: center; font-size: 20px;
+            backdrop-filter: blur(5px); cursor: pointer;
+        }
+
+        #splash {
+            position: absolute; inset: 0; background: #000; z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.5s;
+        }
+        h1 { font-weight: 200; font-size: 3rem; letter-spacing: 5px; margin-bottom: 20px; color: white; }
+        .start-btn {
+            padding: 15px 50px; border: 1px solid rgba(255,255,255,0.5);
+            background: transparent; color: white; border-radius: 30px;
+            font-size: 1rem; letter-spacing: 2px; cursor: pointer;
+        }
+        .faded { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="splash">
+        <h1>ZEN FLUX</h1>
+        <button class="start-btn" id="start-btn">ENTRER</button>
+        <p style="margin-top:20px; color:#666; font-size: 0.8rem">Latence Audio Minimale</p>
+    </div>
+
+    <div class="top-controls">
+        <div class="icon-btn" id="mute-btn">🔊</div>
+        <div class="icon-btn" id="clear-btn">✕</div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <div id="ui-container">
+        <div class="nav-bar">
+            <button class="btn active" onclick="setMode('neon')">Néon</button>
+            <button class="btn" onclick="setMode('physics')">Billes</button>
+            <button class="btn" onclick="setMode('fireworks')">Artifice</button>
+            <button class="btn" onclick="setMode('piano')">Piano</button>
+            <button class="btn" onclick="setMode('wisp')">Esprits</button>
+        </div>
+    </div>
+
+    <script>
+        // --- SYSTEME AUDIO BASSE LATENCE ---
+        const AudioSys = {
+            ctx: null,
+            master: null,
+            muted: false,
+            // Limiter pour éviter la saturation si on bouge trop vite
+            lastPlay: 0, 
+
+            init() {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                // 'interactive' réduit la taille du buffer pour une réponse plus rapide
+                this.ctx = new AC({ latencyHint: 'interactive', sampleRate: 44100 });
+                this.master = this.ctx.createGain();
+                this.master.gain.value = 0.3;
+                this.master.connect(this.ctx.destination);
+                
+                // Joue un son inaudible pour "chauffer" le moteur audio (Mobile Fix)
+                this.play(0, 'sine', 0.01, 0); 
+            },
+
+            play(freq, type='sine', decay=0.5, vol=1) {
+                if(this.muted || !this.ctx) return;
+                
+                // Création ultra-légère pour performance
+                const t = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                osc.type = type;
+                osc.frequency.setValueAtTime(freq, t);
+                
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(vol, t + 0.01); // Attaque rapide (10ms)
+                gain.gain.exponentialRampToValueAtTime(0.001, t + decay);
+
+                osc.connect(gain);
+                gain.connect(this.master);
+                
+                osc.start(t);
+                osc.stop(t + decay + 0.1);
+            },
+            
+            // Sons spécifiques
+            triggerTap(y) {
+                const now = Date.now();
+                if(now - this.lastPlay < 40) return; // Anti-spam (40ms min entre 2 sons)
+                this.lastPlay = now;
+
+                if (mode === 'piano' || mode === 'neon') {
+                    // Echelle pentatonique (toujours harmonieux)
+                    const scale = [261, 293, 329, 392, 440, 523, 587, 659]; 
+                    const idx = Math.floor((1 - y / window.innerHeight) * scale.length);
+                    const note = scale[Math.max(0, Math.min(idx, scale.length-1))];
+                    this.play(note, 'sine', 1.5);
+                } else if (mode === 'fireworks') {
+                    this.play(60 + Math.random()*40, 'sawtooth', 0.8, 0.8);
+                } else if (mode === 'physics') {
+                     // Le son physics est géré par collision
+                }
+            },
+            
+            triggerCollision() {
+                 if(this.muted) return;
+                 // Son très court pour les chocs
+                 this.play(800 + Math.random()*300, 'triangle', 0.1, 0.2);
+            }
+        };
+
+        // --- MOTEUR GRAPHIQUE ---
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { alpha: false }); // Optimisation
+        let width, height;
+        let particles = [];
+        let hue = 0;
+        let mode = 'neon';
+        // mouse object stocke la position
+        let mouse = { x: 0, y: 0, active: false };
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        class Particle {
+            constructor(x, y) {
+                this.x = x; this.y = y;
+                this.color = `hsl(${hue}, 100%, 60%)`;
+                this.life = 100;
+                
+                if(mode === 'physics') {
+                    this.size = 15 + Math.random() * 10;
+                    this.vx = (Math.random()-0.5) * 15;
+                    this.vy = (Math.random()-0.5) * 15;
+                    this.life = 10000;
+                    this.color = `hsl(${hue}, 80%, 50%)`;
+                    this.mass = this.size;
+                } else if(mode === 'fireworks') {
+                    this.size = 3 + Math.random()*3;
+                    this.vx = (Math.random()-0.5) * 8;
+                    this.vy = (Math.random()-0.5) * 8;
+                    this.gravity = 0.2;
+                    this.life = 70;
+                } else if(mode === 'piano') {
+                    this.size = 2 + Math.random()*4;
+                    this.vx = 0; this.vy = 3;
+                    this.life = 100;
+                } else { // Neon / Wisp
+                    this.size = 2 + Math.random()*5;
+                    this.vx = (Math.random()-0.5) * 4;
+                    this.vy = (Math.random()-0.5) * 4;
+                }
+            }
+            update() {
+                if(mode !== 'physics') this.life -= 1;
+                else this.vy += 0.3; // Gravité constante pour billes
+
+                if(mode === 'fireworks') { this.vy += this.gravity; this.vx *= 0.95; this.vy *= 0.95; }
+                
+                // Murs physiques
+                if(mode === 'physics') {
+                    if(this.x < this.size || this.x > width-this.size) { this.vx *= -0.7; this.x = this.x < this.size ? this.size : width-this.size; }
+                    if(this.y < this.size || this.y > height-this.size) { this.vy *= -0.7; this.y = this.y < this.size ? this.size : height-this.size; 
+                        if(Math.abs(this.vy) > 2) AudioSys.triggerCollision(); // Son rebond sol
+                    }
+                }
+                
+                this.x += this.vx; this.y += this.vy;
+                if(mode !== 'physics') this.size -= 0.05;
+            }
+            draw() {
+                if(this.size <= 0) return;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        // --- GESTION INPUT (Directe et Rapide) ---
+        function handleInput(e) {
+            e.preventDefault();
+            // Récupère les coordonnées exactes
+            const t = e.touches ? e.touches[0] : e;
+            const x = t.clientX;
+            const y = t.clientY;
+            
+            mouse.x = x; mouse.y = y;
+            document.getElementById('ui-container').style.opacity = '1';
+
+            const type = e.type;
+            const isDown = (type === 'mousedown' || type === 'touchstart');
+            const isMove = (type === 'mousemove' || type === 'touchmove');
+
+            if (isDown) {
+                mouse.active = true;
+                // SON INSTANTANÉ ICI (Pas dans la boucle animate)
+                AudioSys.triggerTap(y);
+                if(mode === 'physics') particles.push(new Particle(x, y));
+            } else if (type === 'mouseup' || type === 'touchend') {
+                mouse.active = false;
+            }
+
+            // Génération de particules pour le "drag" (déplacer)
+            if (mouse.active && isMove && mode !== 'physics') {
+                AudioSys.triggerTap(y); // Son aussi pendant le mouvement
+                let count = (mode === 'fireworks') ? 3 : 2;
+                for(let i=0; i<count; i++) particles.push(new Particle(x, y));
+            }
+        }
+
+        ['mousedown', 'mousemove', 'mouseup', 'touchstart', 'touchmove', 'touchend']
+            .forEach(evt => canvas.addEventListener(evt, handleInput, {passive: false}));
+
+        // --- BOUCLE ---
+        function animate() {
+            // Effacement intelligent (Anti-white screen)
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = (mode === 'neon') ? 'rgba(5,5,5,0.15)' : 'rgba(5,5,5,0.4)';
+            ctx.fillRect(0, 0, width, height);
+
+            if(mode !== 'physics') ctx.globalCompositeOperation = 'lighter'; // Glow
+
+            // Collisions Billes
+            if(mode === 'physics') {
+                for (let i = 0; i < particles.length; i++) {
+                    for (let j = i + 1; j < particles.length; j++) {
+                        let p1 = particles[i], p2 = particles[j];
+                        let dx = p2.x - p1.x, dy = p2.y - p1.y;
+                        let dist = Math.sqrt(dx*dx + dy*dy);
+                        if (dist < p1.size + p2.size) {
+                            AudioSys.triggerCollision(); // Son choc
+                            let angle = Math.atan2(dy, dx);
+                            let sin = Math.sin(angle), cos = Math.cos(angle);
+                            // Physique élastique simplifiée
+                            let vx1 = p1.vx * cos + p1.vy * sin;
+                            let vy1 = p1.vy * cos - p1.vx * sin;
+                            let vx2 = p2.vx * cos + p2.vy * sin;
+                            let vy2 = p2.vy * cos - p2.vx * sin;
+                            let vFinal1 = ((p1.mass - p2.mass) * vx1 + 2 * p2.mass * vx2) / (p1.mass + p2.mass);
+                            let vFinal2 = ((p2.mass - p1.mass) * vx2 + 2 * p1.mass * vx1) / (p1.mass + p2.mass);
+                            p1.vx = vFinal1 * cos - vy1 * sin; p1.vy = vy1 * cos + vFinal1 * sin;
+                            p2.vx = vFinal2 * cos - vy2 * sin; p2.vy = vy2 * cos + vFinal2 * sin;
+                            // Anti-stick
+                            let overlap = (p1.size + p2.size - dist) / 2;
+                            p1.x -= overlap * Math.cos(angle); p1.y -= overlap * Math.sin(angle);
+                            p2.x += overlap * Math.cos(angle); p2.y += overlap * Math.sin(angle);
+                        }
+                    }
+                }
+            }
+
+            for(let i = 0; i < particles.length; i++) {
+                particles[i].update();
+                particles[i].draw();
+
+                if(mode === 'neon') {
+                    // Liens
+                    for(let j = i; j < particles.length; j++) {
+                        let dx = particles[i].x - particles[j].x;
+                        let dy = particles[i].y - particles[j].y;
+                        if(dx*dx + dy*dy < 6000) {
+                            ctx.beginPath(); ctx.strokeStyle = particles[i].color;
+                            ctx.lineWidth = 0.5; ctx.moveTo(particles[i].x, particles[i].y);
+                            ctx.lineTo(particles[j].x, particles[j].y); ctx.stroke();
+                        }
+                    }
+                }
+                if(particles[i].life <= 0 || particles[i].size <= 0.1) { particles.splice(i, 1); i--; }
+            }
+            hue += 0.5;
+            requestAnimationFrame(animate);
+        }
+
+        // --- UI & INIT ---
+        document.getElementById('start-btn').addEventListener('click', () => {
+            AudioSys.init();
+            if(AudioSys.ctx.state === 'suspended') AudioSys.ctx.resume();
+            document.getElementById('splash').classList.add('faded');
+            animate();
+        });
+
+        window.setMode = (m) => {
+            mode = m; particles = [];
+            // Reset visuel
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = '#050505'; ctx.fillRect(0,0,width,height);
+            // UI Update
+            document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+        };
+
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            particles = []; ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle='#050505'; ctx.fillRect(0,0,width,height);
+        });
+        document.getElementById('mute-btn').addEventListener('click', (e) => {
+            AudioSys.muted = !AudioSys.muted; e.target.innerText = AudioSys.muted ? '🔇' : '🔊';
+        });
+
+    </script>
+</body>
+</html>
